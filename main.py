@@ -1,9 +1,15 @@
+
 import asyncio
 
 from crawl4ai import AsyncWebCrawler
 from dotenv import load_dotenv
 
-from config import BASE_URL, CSS_SELECTOR, REQUIRED_KEYS
+#from config import BASE_URL, CSS_SELECTOR, REQUIRED_KEYS
+from config import BASE_URL, CATEGORY_PAGE_SELECTOR, PRODUCT_PAGE_SELECTOR, REQUIRED_KEYS
+
+
+
+
 from utils.data_utils import (
     save_venues_to_csv,
 )
@@ -11,72 +17,80 @@ from utils.scraper_utils import (
     fetch_and_process_page,
     get_browser_config,
     get_llm_strategy,
+    extract_category_urls,
 )
 
 load_dotenv()
 
 
-async def crawl_venues():
+
+async def crawl_products():
     """
-    Main function to crawl venue data from the website.
+    Main function to crawl all categories and products.
     """
-    # Initialize configurations
     browser_config = get_browser_config()
     llm_strategy = get_llm_strategy()
-    session_id = "venue_crawl_session"
+    session_id = "product_crawl_session"
 
-    # Initialize state variables
-    page_number = 1
-    all_venues = []
+    all_products = []
     seen_names = set()
 
-    # Start the web crawler context
-    # https://docs.crawl4ai.com/api/async-webcrawler/#asyncwebcrawler
     async with AsyncWebCrawler(config=browser_config) as crawler:
-        while True:
-            # Fetch and process data from the current page
-            venues, no_results_found = await fetch_and_process_page(
-                crawler,
-                page_number,
-                BASE_URL,
-                CSS_SELECTOR,
-                llm_strategy,
-                session_id,
-                REQUIRED_KEYS,
-                seen_names,
-            )
+        print(f"[INFO] Fetching categories from {BASE_URL}")
+        category_urls = await extract_category_urls(crawler, BASE_URL)
 
-            if no_results_found:
-                print("No more venues found. Ending crawl.")
-                break  # Stop crawling when "No Results Found" message appears
+        if not category_urls:
+            print("[ERROR] No categories found. Stopping crawl.")
+            return
 
-            if not venues:
-                print(f"No venues extracted from page {page_number}.")
-                break  # Stop if no venues are extracted
+        print(f"[INFO] Found {len(category_urls)} categories. Starting product crawl.")
 
-            # Add the venues from this page to the total list
-            all_venues.extend(venues)
-            page_number += 1  # Move to the next page
+        for category_url in category_urls:
+            print(f"[INFO] Crawling category: {category_url}")
 
-            # Pause between requests to be polite and avoid rate limits
-            await asyncio.sleep(2)  # Adjust sleep time as needed
+            page_number = 1
+            while True:
+                url = f"{category_url}?page={page_number}"  # Ensure pagination
+                print(f"[INFO] Fetching page {page_number} of {category_url}")
 
-    # Save the collected venues to a CSV file
-    if all_venues:
-        save_venues_to_csv(all_venues, "complete_venues.csv")
-        print(f"Saved {len(all_venues)} venues to 'complete_venues.csv'.")
+                products, no_results_found = await fetch_and_process_page(
+                    crawler,
+                    url,
+                    PRODUCT_PAGE_SELECTOR,  # ✅ Use correct product selector
+                    llm_strategy,
+                    session_id,
+                    REQUIRED_KEYS,
+                    seen_names,
+                )
+
+                if no_results_found:
+                    print(f"[INFO] No more products found in category: {category_url}")
+                    break  # Stop pagination when no results are found
+
+                if not products:
+                    print(f"[WARN] No products extracted from page {page_number}.")
+                    break  # Stop if no products are found
+
+                all_products.extend(products)
+                page_number += 1  # Move to next page
+
+                await asyncio.sleep(2)  # Avoid getting blocked
+
+    if all_products:
+        save_products_to_csv(all_products, "market_prices.csv")
+        print(f"[SUCCESS] Saved {len(all_products)} products to 'market_prices.csv'.")
     else:
-        print("No venues were found during the crawl.")
+        print("[ERROR] No products were found during the crawl.")
 
-    # Display usage statistics for the LLM strategy
     llm_strategy.show_usage()
+
 
 
 async def main():
     """
     Entry point of the script.
     """
-    await crawl_venues()
+    await crawl_products()
 
 
 if __name__ == "__main__":
