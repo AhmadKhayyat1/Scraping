@@ -1,71 +1,22 @@
-# config.py
+BASE_URL = "https://www.sarpermarket.com"
 
-#BASE_URL = "https://www.theknot.com/marketplace/wedding-reception-venues-atlanta-ga"
-#CSS_SELECTOR = "[class^='info-container']"
-#REQUIRED_KEYS = [
-#    "name",
-#    "price",
-#    "location",
-#    "capacity",
-#    "rating",
-#    "reviews",
-#    "description",
-#]
-
-# config.py
-'''
-BASE_URL = "https://marketfiyati.org.tr/"
-CSS_SELECTOR = ".product-item"  # Adjust based on the website's structure
-REQUIRED_KEYS = [
-    "name",
-    "price",
-    "old_price",
-    "discount",
-    "store_name",
-    "product_url",
-    "image_url",
-    "category",
-    "brand",
-    "availability",
-    "rating",
-    "reviews",
- ]
-'''
-'''
-# config.py
-
-BASE_URL = "https://marketfiyati.org.tr"
-CATEGORY_URL = "https://marketfiyati.org.tr/kategori/Meyve%20ve%20Sebze"
-CSS_SELECTOR = "[class^='product-summary']"  # Adjust based on the website's structure
-REQUIRED_KEYS = [
-    "name",
-    "price",
-    "old_price",
-    "discount",
-    "store_name",
-    "product_url",
-    "image_url",
-    "category",
-    "brand",
-    "availability",
-    "rating",
-    "reviews",
+CATEGORIES = [
+    "/urun-grubu/atistirmalik/gofret",
 ]
-'''
-BASE_URL = "https://marketfiyati.org.tr"
-CATEGORY_PAGE_SELECTOR = ".d-flex a"  # Example selector for category links
-PRODUCT_PAGE_SELECTOR = ".products-container .product-summary .product-details"
-REQUIRED_KEYS = [
-    "name",
-    "price",
-    "old_price",
-    "discount",
-    "store_name",
-    "product_url",
-    "image_url",
-    "category",
-    "brand",
-    "availability",
-    "rating",
-    "reviews",
-]
+
+# Select the <a> tag that contains product data
+CSS_SELECTOR = "a[href*='/urunler/']"  # Product wrapper (each product link)
+
+# Inside each product wrapper:
+CSS_PRODUCT_NAME = "h2"  # Product name inside <h2>
+CSS_PRODUCT_PRICE = "span.gt-price span.woocommerce-Price-amount"
+CSS_PRODUCT_CURRENCY = "span.woocommerce-Price-currencySymbol font font"
+
+
+CSS_PRODUCT_SKU = "div:nth-of-type(2)"  # SKU inside the second div
+
+REQUIRED_KEYS = ["name", "price", "sku"]  # Remove "price" (some items might not have prices)
+PAGINATION_FORMAT = "?page={page}"
+
+MAX_RETRIES = 3
+REQUEST_DELAY = 2

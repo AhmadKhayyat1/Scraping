@@ -1,97 +1,57 @@
-
 import asyncio
-
-from crawl4ai import AsyncWebCrawler
 from dotenv import load_dotenv
-
-#from config import BASE_URL, CSS_SELECTOR, REQUIRED_KEYS
-from config import BASE_URL, CATEGORY_PAGE_SELECTOR, PRODUCT_PAGE_SELECTOR, REQUIRED_KEYS
-
-
-
-
-from utils.data_utils import (
-    save_venues_to_csv,
-)
-from utils.scraper_utils import (
-    fetch_and_process_page,
-    get_browser_config,
-    get_llm_strategy,
-    extract_category_urls,
-)
+from crawl4ai import AsyncWebCrawler
+from config import BASE_URL, CATEGORIES, CSS_SELECTOR, REQUIRED_KEYS, REQUEST_DELAY
+from utils.data_utils import save_products_to_csv
+from utils.scraper_utils import fetch_product_page, get_browser_config
 
 load_dotenv()
 
-
-
-async def crawl_products():
-    """
-    Main function to crawl all categories and products.
-    """
-    browser_config = get_browser_config()
-    llm_strategy = get_llm_strategy()
-    session_id = "product_crawl_session"
-
+async def crawl_category(crawler: AsyncWebCrawler, category: str, session_id: str):
+    """Crawls all pages of a given category and extracts products."""
+    page_number = 1
     all_products = []
-    seen_names = set()
+    seen_skus = set()
 
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        print(f"[INFO] Fetching categories from {BASE_URL}")
-        category_urls = await extract_category_urls(crawler, BASE_URL)
+    while True:
+        products, no_results = await fetch_product_page(
+            crawler=crawler,
+            page_number=page_number,
+            base_url=BASE_URL,
+            category=category,
+            css_selector=CSS_SELECTOR,
+            session_id=session_id,
+            required_keys=REQUIRED_KEYS,
+            seen_skus=seen_skus,
+        )
 
-        if not category_urls:
-            print("[ERROR] No categories found. Stopping crawl.")
-            return
+        if no_results or not products:
+            break
 
-        print(f"[INFO] Found {len(category_urls)} categories. Starting product crawl.")
+        all_products.extend(products)
+        page_number += 1
+        await asyncio.sleep(REQUEST_DELAY)
 
-        for category_url in category_urls:
-            print(f"[INFO] Crawling category: {category_url}")
-
-            page_number = 1
-            while True:
-                url = f"{category_url}?page={page_number}"  # Ensure pagination
-                print(f"[INFO] Fetching page {page_number} of {category_url}")
-
-                products, no_results_found = await fetch_and_process_page(
-                    crawler,
-                    url,
-                    PRODUCT_PAGE_SELECTOR,  # ✅ Use correct product selector
-                    llm_strategy,
-                    session_id,
-                    REQUIRED_KEYS,
-                    seen_names,
-                )
-
-                if no_results_found:
-                    print(f"[INFO] No more products found in category: {category_url}")
-                    break  # Stop pagination when no results are found
-
-                if not products:
-                    print(f"[WARN] No products extracted from page {page_number}.")
-                    break  # Stop if no products are found
-
-                all_products.extend(products)
-                page_number += 1  # Move to next page
-
-                await asyncio.sleep(2)  # Avoid getting blocked
-
-    if all_products:
-        save_products_to_csv(all_products, "market_prices.csv")
-        print(f"[SUCCESS] Saved {len(all_products)} products to 'market_prices.csv'.")
-    else:
-        print("[ERROR] No products were found during the crawl.")
-
-    llm_strategy.show_usage()
-
-
+    return all_products
 
 async def main():
-    """
-    Entry point of the script.
-    """
-    await crawl_products()
+    """Main function to scrape categories and save data."""
+    browser_config = get_browser_config()
+    session_id = "sarper_crawl_v1"
 
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        all_products = []
+
+        for category in CATEGORIES:
+            print(f"Scraping category: {category}")
+            products = await crawl_category(crawler, category, session_id)
+            all_products.extend(products)
+            print(f"Found {len(products)} products in {category}")
+
+        if all_products:
+            save_products_to_csv(all_products, "sarper_products.csv")
+        else:
+            print("No products scraped.")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,255 +1,96 @@
-
-import json
-from bs4 import BeautifulSoup
-from config import CATEGORY_PAGE_SELECTOR
 import os
 from typing import List, Set, Tuple
-
-from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CacheMode,
-    CrawlerRunConfig,
-    LLMExtractionStrategy,
-)
-
-#from models.venue import Venue
-from models.venue import Product  # Update this line
-from utils.data_utils import is_complete_venue, is_duplicate_venue
+from bs4 import BeautifulSoup
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from config import CSS_PRODUCT_NAME, CSS_PRODUCT_PRICE, CSS_PRODUCT_CURRENCY, CSS_PRODUCT_SKU, PAGINATION_FORMAT
 
 
 def get_browser_config() -> BrowserConfig:
-    """
-    Returns the browser configuration for the crawler.
-
-    Returns:
-        BrowserConfig: The configuration settings for the browser.
-    """
-    # https://docs.crawl4ai.com/core/browser-crawler-config/
+    """Returns browser configuration for crawling."""
     return BrowserConfig(
-        browser_type="chromium",  # Type of browser to simulate
-        headless=False,  # Whether to run in headless mode (no GUI)
-        verbose=True,  # Enable verbose logging
+        browser_type="chromium",
+        headless=True,
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
     )
 
 
-
-
-def get_llm_strategy() -> LLMExtractionStrategy:
-    
-    return LLMExtractionStrategy(
-        provider="groq/deepseek-r1-distill-llama-70b",
-        api_token=os.getenv("GROQ_API_KEY"),
-        schema=Product.model_json_schema(),  # Use the Product schema
-        extraction_type="schema",
-        instruction=(
-            "Extract all product objects with 'name', 'price', 'old_price', 'discount', "
-            "'store_name', 'product_url', 'image_url', 'category', 'brand', 'availability', "
-            "'rating', and 'reviews' from the following content."
-        ),
-        input_format="markdown",
-        verbose=True,
-     )
-
-
-async def check_no_results(
+async def fetch_product_page(
     crawler: AsyncWebCrawler,
-    url: str,
-    session_id: str,
-) -> bool:
-    """
-    Checks if the "No Results Found" message is present on the page.
-
-    Args:
-        crawler (AsyncWebCrawler): The web crawler instance.
-        url (str): The URL to check.
-        session_id (str): The session identifier.
-
-    Returns:
-        bool: True if "No Results Found" message is found, False otherwise.
-    """
-    # Fetch the page without any CSS selector or extraction strategy
-    result = await crawler.arun(
-        url=base_url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            session_id=session_id,
-        ),
-    )
-
-    if result.success:
-        if "No Results Found" in result.cleaned_html:
-            return True
-    else:
-        print(
-            f"Error fetching page for 'No Results Found' check: {result.error_message}"
-        )
-
-    return False
-
-
-
-
-async def fetch_and_process_page(
-    crawler: AsyncWebCrawler,
-    url: str,
+    page_number: int,
+    base_url: str,
+    category: str,
     css_selector: str,
-    llm_strategy: LLMExtractionStrategy,
     session_id: str,
     required_keys: List[str],
-    seen_names: Set[str],
+    seen_skus: Set[str],
 ) -> Tuple[List[dict], bool]:
-    """
-    Fetches and processes a single page of product data.
-    """
-    print(f"Loading page: {url}")
+    """Fetches and extracts products from a single category page."""
 
-    # Fetch page content with the extraction strategy
+    page_url = f"{base_url}{category}{PAGINATION_FORMAT.format(page=page_number)}"
+    print(f"Fetching: {page_url}")
+
+    # Fetch the page using AsyncWebCrawler
     result = await crawler.arun(
-        url=url,
+        url=page_url,
         config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            extraction_strategy=llm_strategy,
-            css_selector=css_selector,
+            cache_mode=CacheMode.BYPASS,  # Avoid caching issues
             session_id=session_id,
-        ),
-    )
-
-    if not (result.success and result.extracted_content):
-        print(f"Error fetching page: {result.error_message}")
-        return [], False
-    
-    # Parse extracted content
-    extracted_data = json.loads(result.extracted_content)
-    if not extracted_data:
-        print(f"No products found on page: {url}")
-        return [], False
-
-    # Process products
-    complete_products = []
-    for product in extracted_data:
-        # Debugging: Print each product to understand its structure
-        print("Processing product:", product)
-
-        # Ignore the 'error' key if it's False
-        if product.get("error") is False:
-            product.pop("error", None)
-
-        if not is_complete_venue(product, required_keys):
-            continue  # Skip incomplete products
-
-        if is_duplicate_venue(product["name"], seen_names):
-            print(f"Duplicate product '{product['name']}' found. Skipping.")
-            continue  # Skip duplicate products
-
-        # Add product to the list
-        seen_names.add(product["name"])
-        complete_products.append(product)
-
-    if not complete_products:
-        print(f"No complete products found on page: {url}")
-        return [], False
-
-    print(f"Extracted {len(complete_products)} products from page: {url}")
-    return complete_products, False  # Continue crawling
-
-from config import CATEGORY_PAGE_SELECTOR
-
-async def extract_category_urls(crawler: AsyncWebCrawler, base_url: str) -> List[str]:
-    """
-    Extracts category URLs from the sidebar.
-    """
-    print(f"CATEGORY_PAGE_SELECTOR: {CATEGORY_PAGE_SELECTOR}")  # Debugging
-    result = await crawler.arun(
-        url=base_url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            css_selector=CATEGORY_PAGE_SELECTOR,
+            css_selector=css_selector,
         ),
     )
 
     if not result.success:
-        print(f"[ERROR] Error fetching categories: {result.error_message}")
-        return []
+        print(f"❌ Failed to fetch {page_url}")
+        return [], False
 
-    # Extract category URLs
-    category_urls = []
+    # Parse the fetched HTML using BeautifulSoup
+    #soup = BeautifulSoup(result.cleaned_html, "html.parser")
     soup = BeautifulSoup(result.cleaned_html, "html.parser")
-    for link in soup.select(CATEGORY_PAGE_SELECTOR):
-        href = link.get("href")
-        if href and "/kategori/" in href:
-            category_urls.append(f"{BASE_URL}{href}")
+    print("=== DEBUG: Sample HTML ===")
+    print(soup.prettify()[:2000])  # Print the first 2000 characters of fetched HTML
+    print("===========================")
 
-    print(f"[INFO] Found {len(category_urls)} categories.")
-    return category_urls
+    products = []
 
+    for product_link in soup.select(css_selector):
+        name_elem = product_link.select_one(CSS_PRODUCT_NAME)
+        price_elem = product_link.select_one(CSS_PRODUCT_PRICE)
+        if price_elem:
+            print(f"🔎 Found Price Element: {price_elem}")
+        else:
+            print("⚠️ No price found for this product!")
 
-async def fetch_products_from_category(
-    crawler: AsyncWebCrawler, category_url: str, llm_strategy: LLMExtractionStrategy, required_keys: List[str], seen_names: Set[str]
-) -> List[dict]:
-    """
-    Extracts products from a given category page.
-    """
-    print(f"Scraping category: {category_url}")
+        currency_elem = product_link.select_one(CSS_PRODUCT_CURRENCY)
+        sku_elem = product_link.select_one(CSS_PRODUCT_SKU)
 
-    all_products = []
-    page_number = 1
+        name = name_elem.get_text(strip=True) if name_elem else "Unknown"
+        sku = sku_elem.get_text(strip=True) if sku_elem else "N/A"
 
-    while True:
-        url = f"{category_url}?page={page_number}"  # Adjust if needed
-        print(f"Fetching page {page_number} of category: {category_url}")
+        def clean_price(price_text):
+            """Remove extra spaces and non-numeric characters."""
+            return "".join(filter(lambda x: x.isdigit() or x == ".", price_text.replace("\xa0", ""))).strip()
+        def clean_price(price_text):
+            """Removes extra spaces, &nbsp;, and keeps only numeric values with decimals."""
+            return price_text.replace("\xa0", "").replace(",", ".").strip()  # Removes &nbsp; and fixes decimal
 
-        result = await crawler.arun(
-            url=url,
-            config=CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS,
-                extraction_strategy=llm_strategy,
-                css_selector="div.product-summary",  # Correct product selector
-            ),
-        )
+        price = clean_price(price_elem.get_text()) if price_elem else "Price Missing"
+        currency = clean_price(currency_elem.get_text()) if currency_elem else ""
 
-        if not (result.success and result.extracted_content):
-            print(f"Error fetching category page: {url}")
-            break  # Stop if no data is found
+        full_price = f"{price} {currency}" if currency else price  # Combine price with currency
+        
+        print(f"🔹 Extracted Product: {name} | Price: {full_price} | SKU: {sku}")  # Debug output
 
-        extracted_data = json.loads(result.extracted_content)
-        if not extracted_data:
-            print(f"No products found in {url}.")
-            break  # Stop if no products are found
+        if sku in seen_skus:
+            continue  
 
-        for product in extracted_data:
-            if not is_complete_product(product, required_keys):
-                continue
-            if is_duplicate_product(product["name"], seen_names):
-                print(f"Duplicate product '{product['name']}' found. Skipping.")
-                continue
+        product = {
+            "name": name,
+            "sku": sku,
+            "price": full_price,  # Always include price
+        }
 
-            seen_names.add(product["name"])
-            all_products.append(product)
+        products.append(product)
+        seen_skus.add(sku)
 
-        # Check if there's a next page
-        if not await has_next_page(crawler, url):
-            break  # Stop if no next page is found
-        page_number += 1
-
-    print(f"Extracted {len(all_products)} products from {category_url}.")
-    return all_products
-async def has_next_page(crawler: AsyncWebCrawler, url: str) -> bool:
-    """
-    Checks if there's a next page available.
-    """
-    result = await crawler.arun(
-        url=url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            css_selector="ul.ngx-pagination a",  # Correct pagination selector
-        ),
-    )
-
-    if not result.success:
-        print(f"Error checking pagination: {result.error_message}")
-        return False
-
-    soup = BeautifulSoup(result.cleaned_html, "html.parser")
-    next_page = soup.select("ul.ngx-pagination a")  # Look for next page link
-    return bool(next_page)  # Return True if pagination exists
+    no_results = len(products) == 0
+    return products, no_results
